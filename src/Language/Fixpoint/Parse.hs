@@ -86,8 +86,8 @@ languageDef =
   emptyDef { Token.commentStart    = "/* "
            , Token.commentEnd      = " */"
            , Token.commentLine     = "--"
-           , Token.identStart      = satisfy (\_ -> False) 
-           , Token.identLetter     = satisfy (\_ -> False)
+           , Token.identStart      = letter
+           , Token.identLetter     = alphaNum <|> oneOf "_'"
            , Token.reservedNames   = [ "SAT"
                                      , "UNSAT"
                                      , "true"
@@ -279,6 +279,8 @@ sortP
   =   try (string "Integer" >>  return FInt)
   <|> try (string "Int"     >>  return FInt)
   <|> try (string "int"     >>  return FInt)
+  <|> try (string "real"    >>  return FReal)
+  <|> try (string "num"    >>  return FNum)
   <|> try (FObj . symbol <$> lowerIdP)
   <|> (fApp <$> (Left <$> fTyConP) <*> many sortP)
 
