@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Main where
 
+import Language.Fixpoint.Names
 import Language.Fixpoint.Parse
 import Language.Fixpoint.PrettyPrint
 import Language.Fixpoint.Types
@@ -29,12 +30,16 @@ main = run tests
 
 quickCheckTests :: TestTree
 quickCheckTests
-  = testGroup "Properties" [
-      testProperty "prop_pprint_parse_inv" prop_pprint_parse_inv
-    ]
+  = testGroup "Properties"
+      [ testProperty "prop_pprint_parse_inv_expr" prop_pprint_parse_inv_expr
+      , testProperty "prop_pprint_parse_inv_pred" prop_pprint_parse_inv_pred
+      ]
 
-prop_pprint_parse_inv :: Expr -> Bool
-prop_pprint_parse_inv p = simplify p == rr (showpp $ simplify p)
+prop_pprint_parse_inv_pred :: Pred -> Bool
+prop_pprint_parse_inv_pred p = p == rr (showpp p)
+
+prop_pprint_parse_inv_expr :: Expr -> Bool
+prop_pprint_parse_inv_expr p = simplify p == rr (showpp $ simplify p)
 
 instance Arbitrary Sort where
   arbitrary = sized arbSort
@@ -117,8 +122,11 @@ instance Arbitrary Symbol where
   arbitrary = fmap (symbol :: Text -> Symbol) arbitrary
 
 instance Arbitrary Text where
-  arbitrary = choose (1,4) >>= \n -> fmap pack (vectorOf n char)
-    where char = elements ['a'..'z']
+  arbitrary = choose (1,4) >>= \n ->
+                fmap pack (vectorOf n char `suchThat` valid)
+    where
+      char = elements ['a'..'z']
+      valid x = x `notElem` fixpointNames && not (isFixKey x)
 
 instance Arbitrary FTycon where
   arbitrary = do

@@ -13,6 +13,10 @@ import qualified Data.Text as T
 
 class PPrint a where
   pprint :: a -> Doc
+  pprint = pprintPrec 0
+  
+  pprintPrec :: Int -> a -> Doc
+  pprintPrec _ = pprint
 
 showpp :: (PPrint a) => a -> String 
 showpp = render . pprint 
@@ -65,37 +69,74 @@ instance PPrint Symbol where
 instance PPrint SymConst where
   pprint (SL x)          = doubleQuotes $ text $ T.unpack x
 
+parensIf True  = parens
+parensIf False = id
+
+opPrec Mod   = 2
+opPrec Plus  = 3
+opPrec Minus = 3
+opPrec Times = 4
+opPrec Div   = 4
+
 instance PPrint Expr where
-  pprint (EApp f es)     = parens $ intersperse empty $ (pprint f) : (pprint <$> es) 
-  pprint (ESym c)        = pprint c 
-  pprint (ECon c)        = pprint c 
-  pprint (EVar s)        = pprint s
-  pprint (ELit s _)      = pprint s
-  pprint (EBin o e1 e2)  = parens $ pprint e1 <+> pprint o <+> pprint e2
-  pprint (EIte p e1 e2)  = parens $ text "if" <+> pprint p <+> text "then" <+> pprint e1 <+> text "else" <+> pprint e2 
-  pprint (ECst e so)     = parens $ pprint e <+> text " : " <+> pprint so 
-  pprint (EBot)          = text "_|_"
+  pprintPrec _ (ESym c)        = pprint c 
+  pprintPrec _ (ECon c)        = pprint c 
+  pprintPrec _ (EVar s)        = pprint s
+  pprintPrec _ (ELit s _)      = pprint s
+  pprintPrec _ (EBot)          = text "_|_"
+  pprintPrec z (EApp f es)     = parensIf (z > za) $
+                                   intersperse empty $
+                                     (pprint f) : (pprintPrec (za+1) <$> es)
+    where za = 5
+  pprintPrec z (EBin o e1 e2)  = parensIf (z > zo) $
+                                   pprintPrec (zo+1) e1 <+>
+                                   pprint o             <+>
+                                   pprintPrec (zo+1) e2
+    where zo = opPrec o
+  pprintPrec z (EIte p e1 e2)  = parensIf (z > zi) $
+                                   text "if"   <+> pprintPrec (zi+1) p  <+>
+                                   text "then" <+> pprintPrec (zi+1) e1 <+>
+                                   text "else" <+> pprintPrec (zi+1) e2
+    where zi = 1
+  pprintPrec _ (ECst e so)     = parens $ pprint e <+> text ":" <+> pprint so 
 
 instance PPrint Pred where
-  pprint PTop            = text "???"
-  pprint PTrue           = trueD 
-  pprint PFalse          = falseD
-  pprint (PBexp e)       = parens $ pprint e
-  pprint (PNot p)        = parens $ text "not" <+> parens (pprint p)
-  pprint (PImp p1 p2)    = parens $ (pprint p1) <+> text "=>"  <+> (pprint p2)
-  pprint (PIff p1 p2)    = parens $ (pprint p1) <+> text "<=>" <+> (pprint p2)
-  pprint (PAnd ps)       = parens $ pprintBin trueD  andD ps
-  pprint (POr  ps)       = parens $ pprintBin falseD orD  ps 
-  pprint (PAtom r e1 e2) = parens $ pprint e1 <+> pprint r <+> pprint e2
-  pprint (PAll xts p)    = text "forall" <+> toFix xts <+> text "." <+> pprint p
+  pprintPrec _ PTop            = text "???"
+  pprintPrec _ PTrue           = trueD 
+  pprintPrec _ PFalse          = falseD
+  pprintPrec _ (PBexp e)       = parens $ pprint e
+  pprintPrec z (PNot p)        = parensIf (z > zn) $ text "not" <+> pprintPrec (zn+1) p
+    where zn = 5
+  pprintPrec z (PImp p1 p2)    = parensIf (z > zi) $
+                                   (pprintPrec (zi+1) p1) <+>
+                                   text "=>"              <+>
+                                   (pprintPrec (zi+1) p2)
+    where zi = 3
+  pprintPrec z (PIff p1 p2)    = parensIf (z > zi) $
+                                   (pprintPrec (zi+1) p1) <+>
+                                   text "<=>"             <+>
+                                   (pprintPrec (zi+1) p2)
+    where zi = 2
+  pprintPrec z (PAnd ps)       = parensIf (z > za) $
+                                   pprintBin (za+1) trueD  andD ps
+    where za = 4
+  pprintPrec z (POr  ps)       = parensIf (z > zo) $
+                                   pprintBin (zo+1) falseD orD  ps
+    where zo = 4
+  pprintPrec z (PAtom r e1 e2) = parensIf (z > za) $
+                                   pprintPrec (za+1) e1 <+>
+                                   pprint r             <+>
+                                   pprintPrec (za+1) e2
+    where za = 1
+  pprintPrec _ (PAll xts p)    = text "forall" <+> toFix xts <+> text "." <+> pprint p
 
 trueD  = text "true"
 falseD = text "false"
-andD   = text "&&"
-orD    = text "||"
+andD   = text " &&"
+orD    = text " ||"
 
-pprintBin b _ [] = b
-pprintBin _ o xs = intersperse o $ pprint <$> xs 
+pprintBin _ b _ [] = b
+pprintBin z _ o xs = intersperse o $ pprintPrec z <$> xs 
 
 instance PPrint Refa where
   pprint (RConc p)     = pprint p
@@ -104,7 +145,7 @@ instance PPrint Refa where
 instance PPrint Reft where 
   pprint r@(Reft (_,ras)) 
     | isTauto r        = text "true"
-    | otherwise        = {- intersperse comma -} pprintBin trueD andD $ flattenRefas ras
+    | otherwise        = {- intersperse comma -} pprintBin 0 trueD andD $ flattenRefas ras
 
  
 

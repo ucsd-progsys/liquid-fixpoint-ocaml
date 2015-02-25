@@ -18,6 +18,7 @@ module Language.Fixpoint.Parse (
   , colon   , dcolon 
   , whiteSpace
   , blanks
+  , fixpointNames
 
   -- * Parsing basic entities
   , fTyConP     -- Type constructors
@@ -82,43 +83,46 @@ type Parser = Parsec String Integer
 
 --------------------------------------------------------------------
 
+fixpointNames =  [ "SAT"
+                 , "UNSAT"
+                 , "true"
+                 , "false"
+                 , "mod"
+                 , "data"
+                 , "Bexp"
+                 , "forall"
+                 , "exists"
+                 , "assume"
+                 , "measure"
+                 , "module"
+                 , "spec"
+                 , "where"
+                 , "True"
+                 , "Int"
+                 , "import"
+                 , "_|_"
+                 , "|"
+                 , "if", "then", "else"
+                 , "and", "or"
+                 ]
+
 languageDef =
   emptyDef { Token.commentStart    = "/* "
            , Token.commentEnd      = " */"
            , Token.commentLine     = "--"
            , Token.identStart      = letter
            , Token.identLetter     = alphaNum <|> oneOf "_'"
-           , Token.reservedNames   = [ "SAT"
-                                     , "UNSAT"
-                                     , "true"
-                                     , "false"
-                                     , "mod"
-                                     , "data"
-                                     , "Bexp"
-                                     , "forall"
-                                     , "exists"
-                                     , "assume"
-                                     , "measure"
-                                     , "module"
-                                     , "spec"
-                                     , "where"
-                                     , "True"
-                                     , "Int"
-                                     , "import"
-                                     , "_|_"
-                                     , "|"
-                                     , "if", "then", "else"
-                                     ]
+           , Token.reservedNames   = fixpointNames
            , Token.reservedOpNames = [ "+", "-", "*", "/", "\\"
                                      , "<", ">", "<=", ">=", "=", "!=" , "/="
-                                     , "mod", "and", "or" 
+                                     -- , "mod", "and", "or" 
                                   --, "is"
                                      , "&&", "||"
                                      , "~", "=>", "<=>"
                                      , "->"
                                      , ":="
                                      , "&", "^", "<<", ">>", "--"
-                                     , "?", "Bexp" -- , "'"
+                                     , "?" -- , "Bexp" -- , "'"
                                      ]
            }
 
@@ -214,8 +218,7 @@ funAppP            =  exprFunSpacesP -- (try exprFunSpacesP) <|> (try exprFunSem
     -- exprFunSemisP  = liftM2 EApp funSymbolP (parenBrackets $ sepBy exprP semi)
     funSymbolP     = locParserP symbolP
 
-bops = [ [ Prefix (reservedOp "-"   >> return eMinus)]
-       , [ Infix  (reservedOp "*"   >> return (EBin Times)) AssocLeft
+bops = [ [ Infix  (reservedOp "*"   >> return (EBin Times)) AssocLeft
          , Infix  (reservedOp "/"   >> return (EBin Div  )) AssocLeft
          ]
        , [ Infix  (reservedOp "-"   >> return (EBin Minus)) AssocLeft
@@ -223,9 +226,6 @@ bops = [ [ Prefix (reservedOp "-"   >> return eMinus)]
          ]
        , [Infix  (reservedOp "mod"  >> return (EBin Mod  )) AssocLeft]
        ]
-
-eMinus = EBin Minus (expr (0 :: Integer)) 
-
 
 exprCastP
   = do e  <- exprP 
@@ -251,17 +251,18 @@ trueP  = reserved "true"  >> return PTrue
 falseP = reserved "false" >> return PFalse
 
 pred0P :: Parser Pred
-pred0P =  trueP 
-      <|> falseP 
-      <|> try (iteP pIte predP)
+pred0P =  try trueP 
+      <|> try falseP 
+      -- <|> try (iteP (PBexp predP) -- don't need this
       <|> try predrP 
       <|> try (parens predP)
-      <|> try (liftM PBexp funAppP)
-      <|> try (reservedOp "&&" >> liftM PAnd predsP)
-      <|> try (reservedOp "||" >> liftM POr  predsP)
+      <|> try (parens $ liftM PBexp exprP) -- FIXME: shoudn't allow just any expr
+      -- <|> try (reservedOp "&&" >> liftM PAnd predsP)
+      -- <|> try (reservedOp "||" >> liftM POr  predsP)
 
 predP  :: Parser Pred
-predP  = buildExpressionParser lops pred0P
+predP  =  buildExpressionParser lops pred0P
+      <?> "predicate"
 
 
 predsP = brackets $ sepBy predP semi
@@ -270,10 +271,12 @@ qmP    = reserved "?" <|> reserved "Bexp"
 
 lops = [ [Prefix (reservedOp "~"    >> return PNot)]
        , [Prefix (reservedOp "not " >> return PNot)]
-       , [Infix  (reservedOp "&&"   >> return (\x y -> PAnd [x,y])) AssocRight]
-       , [Infix  (reservedOp "||"   >> return (\x y -> POr  [x,y])) AssocRight]
+       , [ Infix  (reservedOp "&&"   >> return (\x y -> PAnd [x,y])) AssocRight
+         , Infix  (reservedOp "||"   >> return (\x y -> POr  [x,y])) AssocRight
+         ]
        , [Infix  (reservedOp "=>"   >> return PImp) AssocRight]
-       , [Infix  (reservedOp "<=>"  >> return PIff) AssocRight]]
+       , [Infix  (reservedOp "<=>"  >> return PIff) AssocRight]
+       ]
        
 predrP = do e1    <- exprP
             r     <- brelP

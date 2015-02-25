@@ -46,6 +46,7 @@ module Language.Fixpoint.Names (
   , symSepName
   , size32Name, size64Name, bitVecName, bvAndName, bvOrName
   , prims
+  , isFixKey
 ) where
 
 import GHC.Generics         (Generic)
