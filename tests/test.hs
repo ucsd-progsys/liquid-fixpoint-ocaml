@@ -117,7 +117,7 @@ instance Arbitrary Symbol where
   arbitrary = fmap (symbol :: Text -> Symbol) arbitrary
 
 instance Arbitrary Text where
-  arbitrary = sized $ \n -> fmap pack (vectorOf (max 1 n) char)
+  arbitrary = choose (1,4) >>= \n -> fmap pack (vectorOf n char)
     where char = elements ['a'..'z']
 
 instance Arbitrary FTycon where
