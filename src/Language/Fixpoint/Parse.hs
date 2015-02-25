@@ -89,7 +89,7 @@ fixpointNames =  [ "SAT"
                  , "false"
                  , "mod"
                  , "data"
-                 , "Bexp"
+                 -- , "Bexp"
                  , "forall"
                  , "exists"
                  , "assume"
@@ -97,11 +97,10 @@ fixpointNames =  [ "SAT"
                  , "module"
                  , "spec"
                  , "where"
-                 , "True"
-                 , "Int"
+                 -- , "True"
+                 -- , "Int"
                  , "import"
                  , "_|_"
-                 , "|"
                  , "if", "then", "else"
                  , "and", "or"
                  ]
@@ -111,7 +110,7 @@ languageDef =
            , Token.commentEnd      = " */"
            , Token.commentLine     = "--"
            , Token.identStart      = letter
-           , Token.identLetter     = alphaNum <|> oneOf "_'"
+           , Token.identLetter     = alphaNum <|> oneOf "_'.#"
            , Token.reservedNames   = fixpointNames
            , Token.reservedOpNames = [ "+", "-", "*", "/", "\\"
                                      , "<", ">", "<=", ">=", "=", "!=" , "/="
@@ -123,6 +122,7 @@ languageDef =
                                      , ":="
                                      , "&", "^", "<<", ">>", "--"
                                      , "?" -- , "Bexp" -- , "'"
+                                     , "|"
                                      ]
            }
 
@@ -218,7 +218,8 @@ funAppP            =  exprFunSpacesP -- (try exprFunSpacesP) <|> (try exprFunSem
     -- exprFunSemisP  = liftM2 EApp funSymbolP (parenBrackets $ sepBy exprP semi)
     funSymbolP     = locParserP symbolP
 
-bops = [ [ Infix  (reservedOp "*"   >> return (EBin Times)) AssocLeft
+bops = [ [ Prefix (reservedOp "-"   >> return eMinus) ]
+       , [ Infix  (reservedOp "*"   >> return (EBin Times)) AssocLeft
          , Infix  (reservedOp "/"   >> return (EBin Div  )) AssocLeft
          ]
        , [ Infix  (reservedOp "-"   >> return (EBin Minus)) AssocLeft
@@ -226,6 +227,8 @@ bops = [ [ Infix  (reservedOp "*"   >> return (EBin Times)) AssocLeft
          ]
        , [Infix  (reservedOp "mod"  >> return (EBin Mod  )) AssocLeft]
        ]
+
+eMinus = undefined
 
 exprCastP
   = do e  <- exprP 
@@ -253,10 +256,10 @@ falseP = reserved "false" >> return PFalse
 pred0P :: Parser Pred
 pred0P =  try trueP 
       <|> try falseP 
-      -- <|> try (iteP (PBexp predP) -- don't need this
+      <|> try (iteP pIte predP)  -- NOTE: needed for predicate aliases in LH
       <|> try predrP 
       <|> try (parens predP)
-      <|> try (parens $ liftM PBexp exprP) -- FIXME: shoudn't allow just any expr
+      <|> try (liftM PBexp exprP) -- FIXME: shoudn't allow just any expr
       -- <|> try (reservedOp "&&" >> liftM PAnd predsP)
       -- <|> try (reservedOp "||" >> liftM POr  predsP)
 
@@ -294,6 +297,7 @@ brelP =  (reservedOp "==" >> return (PAtom Eq))
      <|> (reservedOp "<=" >> return (PAtom Le))
      <|> (reservedOp ">"  >> return (PAtom Gt))
      <|> (reservedOp ">=" >> return (PAtom Ge))
+     <?> "relation"
 
 condP f bodyP 
    =   try (iteP f bodyP)
@@ -339,7 +343,7 @@ refBindP bp rp kindP
       vv  <- bp
       t   <- kindP
       reserved "|"
-      ras <- rp <* spaces
+      ras <- rp
       return $ t (Reft (vv, ras))
 
 bindP       = liftM symbol (lowerIdP <* colon)
