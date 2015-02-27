@@ -174,10 +174,12 @@ Library
                , intern
                , mtl
                , parsec
+               , parsers
                , pretty
                , process
                , syb
                , text
+               , trifecta
                , transformers
                , hashable
                , unordered-containers

@@ -1,4 +1,4 @@
-{-# LANGUAGE NoMonomorphismRestriction, FlexibleInstances, UndecidableInstances, TypeSynonymInstances, TupleSections #-}
+{-# LANGUAGE NoMonomorphismRestriction, FlexibleInstances, UndecidableInstances, TypeSynonymInstances, TupleSections, GeneralizedNewtypeDeriving, OverloadedLists #-}
 
 module Language.Fixpoint.Parse (
   
@@ -6,18 +6,20 @@ module Language.Fixpoint.Parse (
     Inputable (..)
   
   -- * Top Level Class for Parseable Values  
-  , Parser
+  , Parser(..)
 
   -- * Lexer to add new tokens
-  , lexer 
+  -- , lexer
+  , getPosition
 
   -- * Some Important keyword and parsers
   , reserved, reservedOp
-  , parens  , brackets, angles, braces
-  , semi    , comma     
-  , colon   , dcolon 
+  -- , parens  , brackets, angles, braces
+  -- , semi    , comma     
+  -- , colon   , dcolon 
   , whiteSpace
   , blanks
+  , dcolon
 
   -- * Parsing basic entities
   , fTyConP     -- Type constructors
@@ -51,22 +53,30 @@ module Language.Fixpoint.Parse (
   -- * Parsing Function
   , doParse' 
   , parseFromFile
-  , remainderP 
+  -- , remainderP 
   ) where
 
-import Control.Applicative ((<*>), (<$>), (<*))
+import Control.Applicative (Applicative, Alternative, (<*>), (<$>), (<*), (<|>))
 import Control.Monad
-import Text.Parsec
-import Text.Parsec.Expr
+import Control.Monad.State
+-- import Text.Parsec
+-- import Text.Parsec.Expr
 import Text.Parsec.Pos
-import Text.Parsec.Language
-import Text.Parsec.String hiding (Parser, parseFromFile)
-import Text.Printf  (printf)
-import qualified Text.Parsec.Token as Token
+-- import Text.Parsec.Language
+-- import Text.Parsec.String hiding (Parser, parseFromFile)
+-- import Text.Printf  (printf)
+-- import qualified Text.Parsec.Token as Token
+import qualified Text.Trifecta as P
+import Text.Trifecta hiding (Parser, symbol, whiteSpace)
+import Text.Trifecta.Delta
+import Text.Parser.Token.Style
+import Text.Parser.Expression
+import Text.Parser.LookAhead
 import qualified Data.HashMap.Strict as M
 import qualified Data.HashSet as S
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.ByteString.Char8 as B
 
 import Data.Char (isLower, toUpper)
 import Language.Fixpoint.Misc hiding (dcolon)
@@ -79,79 +89,121 @@ import Data.Maybe(maybe, fromJust)
 
 import Data.Monoid (mempty)
 
-type Parser = Parsec String Integer
-
 --------------------------------------------------------------------
 
-languageDef =
-  emptyDef { Token.commentStart    = "/* "
-           , Token.commentEnd      = " */"
-           , Token.commentLine     = "--"
-           , Token.identStart      = satisfy (\_ -> False) 
-           , Token.identLetter     = satisfy (\_ -> False)
-           , Token.reservedNames   = [ "SAT"
-                                     , "UNSAT"
-                                     , "true"
-                                     , "false"
-                                     , "mod"
-                                     , "data"
-                                     , "Bexp"
-                                     , "forall"
-                                     , "exists"
-                                     , "assume"
-                                     , "measure"
-                                     , "module"
-                                     , "spec"
-                                     , "where"
-                                     , "True"
-                                     , "Int"
-                                     , "import"
-                                     , "_|_"
-                                     , "|"
-                                     , "if", "then", "else"
-                                     ]
-           , Token.reservedOpNames = [ "+", "-", "*", "/", "\\"
-                                     , "<", ">", "<=", ">=", "=", "!=" , "/="
-                                     , "mod", "and", "or" 
-                                  --, "is"
-                                     , "&&", "||"
-                                     , "~", "=>", "<=>"
-                                     , "->"
-                                     , ":="
-                                     , "&", "^", "<<", ">>", "--"
-                                     , "?", "Bexp" -- , "'"
-                                     ]
-           }
+-- languageDef =
+--   emptyDef { Token.commentStart    = "/* "
+--            , Token.commentEnd      = " */"
+--            , Token.commentLine     = "--"
+--            , Token.identStart      = satisfy (\_ -> False) 
+--            , Token.identLetter     = satisfy (\_ -> False)
+--            , Token.reservedNames   = [ "SAT"
+--                                      , "UNSAT"
+--                                      , "true"
+--                                      , "false"
+--                                      , "mod"
+--                                      , "data"
+--                                      , "Bexp"
+--                                      , "forall"
+--                                      , "exists"
+--                                      , "assume"
+--                                      , "measure"
+--                                      , "module"
+--                                      , "spec"
+--                                      , "where"
+--                                      , "True"
+--                                      , "Int"
+--                                      , "import"
+--                                      , "_|_"
+--                                      , "|"
+--                                      , "if", "then", "else"
+--                                      ]
+--            , Token.reservedOpNames = [ "+", "-", "*", "/", "\\"
+--                                      , "<", ">", "<=", ">=", "=", "!=" , "/="
+--                                      , "mod", "and", "or" 
+--                                   --, "is"
+--                                      , "&&", "||"
+--                                      , "~", "=>", "<=>"
+--                                      , "->"
+--                                      , ":="
+--                                      , "&", "^", "<<", ">>", "--"
+--                                      , "?", "Bexp" -- , "'"
+--                                      ]
+--            }
 
-lexer         = Token.makeTokenParser languageDef
-reserved      = Token.reserved      lexer
-reservedOp    = Token.reservedOp    lexer
-parens        = Token.parens        lexer
-brackets      = Token.brackets      lexer
-angles        = Token.angles        lexer
-semi          = Token.semi          lexer
-colon         = Token.colon         lexer
-comma         = Token.comma         lexer
-whiteSpace    = Token.whiteSpace    lexer
-stringLiteral = Token.stringLiteral lexer
-braces        = Token.braces        lexer
-double        = Token.float         lexer
--- integer       = Token.integer       lexer
+-- lexer         = Token.makeTokenParser languageDef
+-- reserved      = Token.reserved      lexer
+-- reservedOp    = Token.reservedOp    lexer
+-- parens        = Token.parens        lexer
+-- brackets      = Token.brackets      lexer
+-- angles        = Token.angles        lexer
+-- semi          = Token.semi          lexer
+-- colon         = Token.colon         lexer
+-- comma         = Token.comma         lexer
+-- whiteSpace    = Token.whiteSpace    lexer
+-- stringLiteral = Token.stringLiteral lexer
+-- braces        = Token.braces        lexer
+-- double        = Token.float         lexer
+-- -- integer       = Token.integer       lexer
 
 -- identifier = Token.identifier lexer
 
+idStyle    = haskellIdents { _styleReserved =
+                                [ "SAT"
+                                , "UNSAT"
+                                , "true"
+                                , "false"
+                                , "mod"
+                                , "data"
+                                , "forall"
+                                , "exists"
+                                , "assume"
+                                , "measure"
+                                , "module"
+                                , "spec"
+                                , "where"
+                                , "import"
+                                , "if", "then", "else"
+                                , "mod", "and", "or"
+                                , "type", "predicate", "inline", "expression"
+                                ]
+                           , _styleLetter =  _styleLetter haskellIdents
+                                         <|> oneOf "."
+                           }
+identifier = ident   idStyle
+reserved   = reserve idStyle
+
+opStyle    = haskellOps { _styleReserved =
+                                [ "+", "-", "*", "/", "\\"
+                                , "<", ">", "<=", ">=", "=", "!=" , "/="
+                                , "&&", "||"
+                                , "~", "=>", "<=>"
+                                , "->"
+                                , "_|_"
+                                , "|"
+                                , ":="
+                                , "&", "^", "<<", ">>"
+                                , "?"
+                                ]
+                           }
+operator   = ident   opStyle
+reservedOp = reserve opStyle
 
 blanks  = many (satisfy (`elem` [' ', '\t']))
 
-integer = posInteger 
-  
---  try (char '-' >> (negate <$> posInteger))
---       <|> posInteger
+whiteSpace = buildSomeSpaceParser P.whiteSpace haskellCommentStyle
 
-posInteger = toI <$> (many1 digit <* spaces)
-  where
-    toI :: String -> Integer 
-    toI = read
+-- blanks = whiteSpace
+
+-- integer = posInteger 
+  
+-- --  try (char '-' >> (negate <$> posInteger))
+-- --       <|> posInteger
+
+-- posInteger = toI <$> (many1 digit <* spaces)
+--   where
+--     toI :: String -> Integer 
+--     toI = read
 
 ----------------------------------------------------------------
 ------------------------- Expressions --------------------------
@@ -160,12 +212,17 @@ posInteger = toI <$> (many1 digit <* spaces)
 locParserP :: Parser a -> Parser (Located a)
 locParserP p = liftM2 Loc getPosition p
 
+deltaSourcePos (Directed f l c _ _) = newPos (B.unpack f) (fromIntegral l) (fromIntegral c)
+getPosition = fmap deltaSourcePos position
+
+-- FIXME: we (LH) rely on this parser being dumb and *not* consuming trailing
+-- whitespace, in order to avoid some parsers spanning multiple lines..
 condIdP  :: [Char] -> (String -> Bool) -> Parser Symbol
 condIdP chars f 
   = do c  <- letter
        cs <- many (satisfy (`elem` chars))
        blanks
-       if f (c:cs) then return (symbol $ T.pack $ c:cs) else parserZero
+       if f (c:cs) then return (symbol $ T.pack $ c:cs) else mzero
 
 upperIdP :: Parser Symbol
 upperIdP = condIdP symChars (not . isLower . head)
@@ -270,7 +327,7 @@ bops = [ [ Prefix (reservedOp "-"   >> return ENeg)]
        , [ Infix  (reservedOp "-"   >> return (EBin Minus)) AssocLeft
          , Infix  (reservedOp "+"   >> return (EBin Plus )) AssocLeft
          ]
-       , [ Infix  (reservedOp "mod"  >> return (EBin Mod  )) AssocLeft]
+       , [ Infix  (reserved  "mod"  >> return (EBin Mod  )) AssocLeft]
        ]
 
 eMinus = EBin Minus (expr (0 :: Integer)) 
@@ -278,11 +335,11 @@ eMinus = EBin Minus (expr (0 :: Integer))
 
 exprCastP
   = do e  <- exprP 
-       ((try dcolon) <|> colon)
+       ((try dcolon) <|> void colon)
        so <- sortP
        return $ ECst e so
 
-dcolon = string "::" <* spaces
+dcolon = void $ string "::" <* spaces
 
 sortP
   =   try (string "Integer" >>  return FInt)
@@ -318,7 +375,7 @@ predP  = buildExpressionParser lops pred0P
 
 predsP = brackets $ sepBy predP semi
 
-qmP    = reserved "?" <|> reserved "Bexp"
+qmP    = reservedOp "?" <|> reserved "Bexp"
 
 lops = [ [Prefix (reservedOp "~"    >> return PNot)]
        , [Prefix (reservedOp "not " >> return PNot)]
@@ -362,7 +419,7 @@ condIteP f bodyP
 
 condQmP f bodyP 
   = do p  <- predP 
-       reserved "?"
+       reservedOp "?"
        b1 <- bodyP 
        colon
        b2 <- bodyP 
@@ -387,7 +444,7 @@ refBindP bp rp kindP
   = braces $ do
       vv  <- bp
       t   <- kindP
-      reserved "|"
+      reservedOp "|"
       ras <- rp <* spaces
       return $ t (Reft (vv, ras))
 
@@ -403,7 +460,7 @@ refDefP vv = refBindP (optBindP vv)
 
 -- qualifierP = mkQual <$> upperIdP <*> parens $ sepBy1 sortBindP comma <*> predP
 
-qualifierP = do pos    <- getPosition 
+qualifierP = do pos    <- fmap deltaSourcePos position 
                 n      <- upperIdP 
                 params <- parens $ sepBy1 sortBindP comma
                 _      <- colon
@@ -524,26 +581,37 @@ solutionFileP
 
 ------------------------------------------------------------------------
 
-remainderP p  
-  = do res <- p
-       str <- getInput
-       pos <- getPosition 
-       return (res, str, pos) 
+-- remainderP p  
+--   = do res <- p
+--        str <- getInput
+--        pos <- getPosition 
+--        return (res, str, pos) 
 
-doParse' parser f s
-  = case runParser (remainderP (whiteSpace >> parser)) 0 f s of
-      Left e            -> die $ err (errorSpan e) $ printf "parseError %s\n when parsing from %s\n" (show e) f 
-      Right (r, "", _)  -> r
-      Right (_, rem, l) -> die $ err (SS l l) $ printf "doParse has leftover when parsing: %s\nfrom file %s\n" rem f
+-- doParse' parser f s
+--   = case runParser (remainderP (whiteSpace >> parser)) 0 f s of
+--       Left e            -> die $ err (errorSpan e) $ printf "parseError %s\n when parsing from %s\n" (show e) f 
+--       Right (r, "", _)  -> r
+--       Right (_, rem, l) -> die $ err (SS l l) $ printf "doParse has leftover when parsing: %s\nfrom file %s\n" rem f
     
-errorSpan e = SS l l where l = errorPos e
+-- errorSpan e = SS l l where l = errorPos e
 
-parseFromFile :: Parser b -> SourceName -> IO b
-parseFromFile p f = doParse' p f <$> readFile f
+-- parseFromFile :: Parser b -> SourceName -> IO b
+-- parseFromFile p f = doParse' p f <$> readFile f
+
+doParse' :: Parser a -> String -> String -> a
+doParse' p f s
+  = case parseString (evalStateT (unParser p) 0) (Directed (B.pack f) 0 0 0 0) s of
+      Success a -> a
+      Failure e -> error $ show e
+
+newtype Parser a = Parser { unParser :: StateT Integer (P.Parser) a }
+  deriving ( Functor, Applicative, Alternative, Monad, MonadPlus, MonadState Integer
+           , Parsing, CharParsing, TokenParsing, DeltaParsing, LookAheadParsing
+           )
 
 freshIntP :: Parser Integer
-freshIntP = do n <- getState
-               updateState (+ 1)
+freshIntP = do n <- get
+               modify (+ 1)
                return n
 
 ---------------------------------------------------------------------
