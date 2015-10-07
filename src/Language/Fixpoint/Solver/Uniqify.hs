@@ -5,7 +5,7 @@ module Language.Fixpoint.Solver.Uniqify (renameAll) where
 
 import           Language.Fixpoint.Types
 import           Language.Fixpoint.Visitor          (mapKVars')
-import           Language.Fixpoint.Names            (renameSymbol)
+import           Language.Fixpoint.Names            (renameSymbol, unintern)
 import           Language.Fixpoint.Solver.Eliminate (findWfC)
 import           Language.Fixpoint.Misc             (fst3, mlookup)
 import qualified Data.HashMap.Strict                as M
@@ -88,7 +88,7 @@ addId be m i
 addDupId :: RenameMap -> Symbol -> Sort -> BindId -> RenameMap
 addDupId m sym t i
   | isJust $ L.lookup t mapping = m
-  | otherwise                   = M.insert sym ((t, Just $ renameSymbol sym i) : mapping) m
+  | otherwise                   = M.insert sym ((t, Just $ renameSymbol (unintern sym) i) : mapping) m
   where
     mapping = fromJust $ M.lookup sym m
 --------------------------------------------------------------

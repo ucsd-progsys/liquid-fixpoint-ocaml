@@ -486,7 +486,7 @@ instance Fixpoint SymConst where
   toFix  = toFix . encodeSymConst
 
 instance Fixpoint Symbol where
-  toFix = text . encode . T.unpack . symbolText
+  toFix = text . T.unpack . symbolEncoded
 
 instance Fixpoint KVar where
   toFix (KV k) = text "$" <> toFix k
@@ -1539,7 +1539,7 @@ addIds = zipWith (\i c -> (i, shiftId i $ c {_sid = Just i})) [1..]
     shiftId i c = c { slhs = shiftSR i $ slhs c }
                     { srhs = shiftSR i $ srhs c }
     shiftSR i sr = sr { sr_reft = shiftR i $ sr_reft sr }
-    shiftR i r@(Reft (v, _)) = shiftVV r (v `mappend` symbol (show i))
+    shiftR i r@(Reft (v, _)) = shiftVV r (intSymbol (symbolText v) i)
 
 
 ------------------------------------------------------------------------

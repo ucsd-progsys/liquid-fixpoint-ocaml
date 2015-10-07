@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings          #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
 {-# LANGUAGE StandaloneDeriving         #-}
+{-# LANGUAGE TypeFamilies               #-}
 {-# LANGUAGE TypeSynonymInstances       #-}
 {-# LANGUAGE ViewPatterns               #-}
 {-# LANGUAGE CPP                        #-}
@@ -18,7 +19,7 @@
 module Language.Fixpoint.Names (
 
   -- * Symbols
-    Symbol
+    Symbol, symbolRaw, symbolEncoded, unintern
   , Symbolic (..)
   , anfPrefix, tempPrefix, vv, isPrefixOfSym, isSuffixOfSym, stripParensSym
   , consSym, unconsSym, dropSym, singletonSym, headSym, takeWhileSym, lengthSym
@@ -65,11 +66,11 @@ import           Data.Char                   (isAlpha, chr, ord)
 import           Data.Generics               (Data)
 import           Data.Hashable               (Hashable (..))
 import qualified Data.HashSet                as S
-import           Data.Interned               (intern, unintern)
-import           Data.Interned.Internal.Text
+import           Data.Interned
 import           Data.Maybe                  (fromMaybe)
-import           Data.String                 (IsString)
+import           Data.String                 (IsString(..))
 import qualified Data.Text                   as T
+import           Data.Text                   (Text)
 import           Data.Binary                 (Binary (..))
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
@@ -87,40 +88,66 @@ symChars
   ++ ['0' .. '9']
   ++ ['_', '%', '.', '#']
 
-deriving instance Data     InternedText
-deriving instance Typeable InternedText
-deriving instance Generic  InternedText
+data Symbol
+  = S { symbolId      :: !Id
+      , symbolRaw     :: !Text
+      , symbolEncoded :: !Text
+      } deriving (Data, Typeable, Generic)
 
-newtype Symbol = S InternedText
-                 deriving (Eq, Ord, Data, Typeable, Generic, IsString)
+instance Eq Symbol where
+  S i _ _ == S j _ _ = i == j
 
-instance Monoid Symbol where
-  mempty      = ""
-  mappend x y = S . intern $ mappend (symbolText x) (symbolText y)
+instance Ord Symbol where
+  compare (S i _ _) (S j _ _) = compare i j
 
-instance Hashable InternedText where
-  hashWithSalt s (InternedText i t) = hashWithSalt s i
+instance Interned Symbol where
+  type Uninterned Symbol = Text
+  newtype Description Symbol = DT Text deriving (Eq)
+  describe = DT
+  identify i t = S i t (encode t)
+  cache = sCache
 
-instance NFData InternedText where
-  rnf (InternedText id t) = rnf id `seq` rnf t `seq` ()
+instance Uninternable Symbol where
+  unintern (S _ t _) = t
 
-instance Show Symbol where
-  show (S x) = show x
-
-instance NFData Symbol where
-  rnf (S x) = rnf x
+instance Hashable (Description Symbol) where
+  hashWithSalt s (DT t) = hashWithSalt s t
 
 instance Hashable Symbol where
-  hashWithSalt i (S s) = hashWithSalt i s
+  hashWithSalt s (S i _ _) = i -- hashWithSalt s i
 
--- instance Binary InternedText
+instance NFData Symbol where
+  rnf (S _ _ _) = ()
 
 instance Binary Symbol where
-  get = S . intern <$> get
-  put = put . symbolText
+  get = intern <$> get
+  put = put . symbolRaw
+
+sCache :: Cache Symbol
+sCache = mkCache
+{-# NOINLINE sCache #-}
+
+instance IsString Symbol where
+  fromString = intern . T.pack
+
+-- instance Monoid Symbol where
+--   mempty      = ""
+--   mappend x y = S . intern $ mappend (symbolText x) (symbolText y)
+
+instance Show Symbol where
+  show = show . symbolRaw
+
+encode :: Text -> Text
+encode t = {-# SCC "smt2-encode" #-}
+  foldr (uncurry T.replace) t [("[", "ZM"), ("]", "ZN"), (":", "ZC")
+                              ,("(", "ZL"), (")", "ZR"), (",", "ZT")
+                              ,("|", "zb"), ("#", "zh"), ("\\","zr")
+                              ,("z", "zz"), ("Z", "ZZ"), ("%","zv")
+                              ,(" ", "_") , ("'", "ZT")
+                              ]
 
 symbolString :: Symbol -> String
-symbolString = T.unpack . symbolText
+symbolString = T.unpack . symbolRaw
 
 ---------------------------------------------------------------------------
 ------ Converting Strings To Fixpoint -------------------------------------
@@ -129,16 +156,16 @@ symbolString = T.unpack . symbolText
 -- stringSymbolRaw :: String -> Symbol
 -- stringSymbolRaw = S
 
-encode :: String -> String
-encode s
-  | isFixKey  s = encodeSym s
-  | isFixSym' s = s
-  | otherwise   = encodeSym s
+-- encode :: String -> String
+-- encode s
+--   | isFixKey  s = encodeSym s
+--   | isFixSym' s = s
+--   | otherwise   = encodeSym s
 
 encodeSym s     = fixSymPrefix ++ concatMap encodeChar s
 
 symbolText :: Symbol -> T.Text
-symbolText (S s) = unintern s
+symbolText = symbolRaw
 
 
 okSymChars = S.fromList $ ['a' .. 'z']
@@ -171,13 +198,13 @@ stripParens t = fromMaybe t (strip t)
 
 stripParensSym (symbolText -> t) = symbol $ stripParens t
 
-suffixSymbol (S s) suf = symbol $ (unintern s) `mappend` suf
+suffixSymbol (s :: Symbol) suf = symbol $ (unintern s) `mappend` suf
 
 isFixSym' (c:chs)  = isAlpha c && all (`S.member` (symSepName `S.insert` okSymChars)) chs
 isFixSym' _        = False
 
-isFixKey x = S.member x keywords
-keywords   = S.fromList ["env", "id", "tag", "qualif", "constant", "cut", "bind", "constraint", "lhs", "rhs"]
+-- isFixKey x = S.member x keywords
+-- keywords   = S.fromList ["env", "id", "tag", "qualif", "constant", "cut", "bind", "constraint", "lhs", "rhs"]
 
 encodeChar c
   | c `S.member` okSymChars
@@ -211,17 +238,17 @@ isNontrivialVV      = not . (vv Nothing ==)
 
 dummySymbol         = dummyName
 
-intSymbol :: (Show a) => Symbol -> a -> Symbol
-intSymbol x i       = x `mappend` symbol ('_' : show i)
+intSymbol :: (Show a) => Text -> a -> Symbol
+intSymbol x i       = intern $ x `mappend` T.pack ('_' : show i)
 
-tempSymbol, existSymbol :: Symbol -> Integer -> Symbol
+tempSymbol, existSymbol :: Text -> Integer -> Symbol
 tempSymbol  prefix n = intSymbol (tempPrefix  `mappend` prefix) n
 existSymbol prefix n = intSymbol (existPrefix `mappend` prefix) n
 
-renameSymbol :: Symbol -> Int -> Symbol
+renameSymbol :: Text -> Int -> Symbol
 renameSymbol prefix n = intSymbol (renamePrefix `mappend` prefix) n
 
-tempPrefix, anfPrefix, existPrefix :: Symbol
+tempPrefix, anfPrefix, existPrefix :: Text
 tempPrefix          = "lq_tmp_"
 anfPrefix           = "lq_anf_"
 existPrefix         = "lq_ext_"
@@ -240,10 +267,7 @@ instance Symbolic String where
   symbol = symbol . T.pack
 
 instance Symbolic T.Text where
-  symbol = S . intern
-
-instance Symbolic InternedText where
-  symbol = S
+  symbol = intern
 
 instance Symbolic Symbol where
   symbol = id

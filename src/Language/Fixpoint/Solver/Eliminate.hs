@@ -7,7 +7,7 @@ module Language.Fixpoint.Solver.Eliminate
 import           Language.Fixpoint.Types
 import           Language.Fixpoint.Solver.Deps (depNonCuts, deps)
 import           Language.Fixpoint.Visitor     (kvars, mapKVars, rhsKVars)
-import           Language.Fixpoint.Names       (existSymbol)
+import           Language.Fixpoint.Names       (existSymbol, unintern)
 import           Language.Fixpoint.Misc        (errorstar, snd3, thd3)
 
 import qualified Data.HashMap.Strict as M
@@ -90,7 +90,7 @@ functionsInBindEnv be = map snd3 fList
 
 renameVar :: (Symbol, Sort) -> State Integer ((Symbol, Sort), (Symbol, Expr))
 renameVar (sym, srt) = do n <- get
-                          let s = existSymbol sym n
+                          let s = existSymbol (unintern sym) n
                           put (n+1)
                           return ((s, srt) , (sym, eVar s))
 --renameVar (sym, srt) = state $ (addExpr . existSymbol sym) &&& (+1)
