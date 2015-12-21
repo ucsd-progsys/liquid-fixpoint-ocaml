@@ -33,12 +33,13 @@ module Language.Fixpoint.Types (
   , resultDoc
 
   -- * Symbols
-  , Symbol
+  , Symbol (..)
   , KVar (..)
   , anfPrefix, tempPrefix, vv, vv_, intKvar
   , symChars, isNonSymbol, nonSymbol
   , isNontrivialVV
-  , symbolSafeText, symbolSafeString
+  , symbolSafeString
+  , symbolSafeText
 
   -- * Creating Symbols
   , dummySymbol
@@ -467,7 +468,7 @@ instance Fixpoint SymConst where
   toFix  = toFix . encodeSymConst
 
 instance Fixpoint Symbol where
-  toFix = toFix . symbolSafeText
+  toFix = text . symbolSafeString
 
 instance Fixpoint KVar where
   toFix (KV k) = text "$" <> toFix k

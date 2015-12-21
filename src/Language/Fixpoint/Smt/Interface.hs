@@ -62,10 +62,11 @@ import           Control.Monad
 import           Data.Char
 import           Data.Monoid
 import qualified Data.Text                as T
-import           Data.Text.Format         hiding (format)
+import           Data.Text.Format
 import qualified Data.Text.IO             as TIO
--- import qualified Data.Text.Lazy           as LT
--- import qualified Data.Text.Lazy.IO        as LTIO
+import qualified Data.Text.Lazy           as LT
+import qualified Data.Text.Lazy.Builder   as LT
+import qualified Data.Text.Lazy.IO        as LTIO
 import           System.Directory
 import           System.Console.CmdArgs.Verbosity
 import           System.Exit              hiding (die)
@@ -107,8 +108,8 @@ command me !cmd      = {-# SCC "command" #-} say cmd >> hear cmd
     hear _            = return Ok
 
 
-smtWrite :: Context -> T.Text -> IO ()
-smtWrite me !s = smtWriteRaw me s
+smtWrite :: Context -> LT.Builder -> IO ()
+smtWrite me !s = smtWriteRaw me $ LT.toLazyText s
 
 smtRead :: Context -> IO Response
 smtRead me = {-# SCC "smtRead" #-}
@@ -157,7 +158,7 @@ negativeP
 --              ([],_)      -> []
 --              ([x,y], zs) -> (x,y) : pairs zs
 
-smtWriteRaw      :: Context -> T.Text -> IO ()
+smtWriteRaw      :: Context -> LT.Text -> IO ()
 smtWriteRaw me !s = {-# SCC "smtWriteRaw" #-} do
   hPutStrLnNow (cOut me) s
   -- whenLoud $ TIO.appendFile debugFile (s <> "\n")
@@ -166,7 +167,7 @@ smtWriteRaw me !s = {-# SCC "smtWriteRaw" #-} do
 smtReadRaw       :: Context -> IO Raw
 smtReadRaw me    = {-# SCC "smtReadRaw" #-} TIO.hGetLine (cIn me)
 
-hPutStrLnNow h !s   = TIO.hPutStrLn h s >> hFlush h
+hPutStrLnNow h !s   = LTIO.hPutStrLn h s >> hFlush h
 
 --------------------------------------------------------------------------
 -- | SMT Context ---------------------------------------------------------

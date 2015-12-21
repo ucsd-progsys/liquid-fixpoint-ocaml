@@ -18,7 +18,7 @@
 module Language.Fixpoint.Names (
 
   -- * Symbols
-    Symbol
+    Symbol (symbolRaw, symbolEncoded)
   , Symbolic (..)
 
   -- * Conversion to/from Text
@@ -88,6 +88,13 @@ module Language.Fixpoint.Names (
 
 import           Control.DeepSeq             (NFData (..))
 import           Control.Arrow               (second)
+import           Data.ByteString             (ByteString)
+import qualified Data.ByteString             as B
+import qualified Data.ByteString.Builder     as B
+import qualified Data.ByteString.Builder.Prim  as E
+import           Data.ByteString.Builder.Prim
+                 ( condB, liftFixedToBounded, (>*<), (>$<) )
+import qualified Data.ByteString.Lazy.Char8  as LB
 import           Data.Char                   (ord)
 import           Data.Generics               (Data)
 import           Data.Hashable               (Hashable (..))
@@ -95,11 +102,16 @@ import qualified Data.HashSet                as S
 import           Data.Interned
 import           Data.Interned.Internal.Text
 import           Data.String                 (IsString(..))
+import           Data.Text                   (Text)
 import qualified Data.Text                   as T
+import qualified Data.Text.Encoding          as T
+import qualified Data.Text.Lazy              as LT
+import qualified Data.Text.Lazy.Encoding     as LT
 import           Data.Binary                 (Binary (..))
 import           Data.Typeable               (Typeable)
 import           GHC.Generics                (Generic)
 
+import Numeric
 
 ---------------------------------------------------------------
 -- | Symbols --------------------------------------------------
@@ -109,8 +121,8 @@ deriving instance Data     InternedText
 deriving instance Typeable InternedText
 deriving instance Generic  InternedText
 
-{-@ type SafeText = {v: T.Text | IsSafe v} @-}
-type SafeText = T.Text
+{-@ type SafeText = {v: Text | IsSafe v} @-}
+type SafeText = Text
 
 -- | Invariant: a `SafeText` is made up of:
 --
@@ -126,8 +138,8 @@ type SafeText = T.Text
 
 data Symbol
   = S { symbolId      :: !Id
-      , symbolRaw     :: !T.Text
-      , symbolEncoded :: !T.Text
+      , symbolRaw     :: !Text
+      , symbolEncoded :: !Text
       } deriving (Data, Typeable, Generic)
 
 instance Eq Symbol where
@@ -218,7 +230,7 @@ symbolSafeText :: Symbol -> SafeText
 symbolSafeText = symbolEncoded
 
 symbolSafeString :: Symbol -> String
-symbolSafeString = T.unpack . symbolSafeText
+symbolSafeString = T.unpack . symbolEncoded
 
 -- symbolText :: Symbol -> T.Text
 -- symbolText = decode
@@ -239,6 +251,64 @@ symbolSafeString = T.unpack . symbolSafeText
 ---------------------------------------------------------------------------
 -- | Encoding Symbols -----------------------------------------------------
 ---------------------------------------------------------------------------
+
+myEncode = T.decodeLatin1 . LB.toStrict . B.toLazyByteString
+         . E.primMapListBounded zEncode . T.unpack
+
+{-# INLINE zEncode #-}
+zEncode :: E.BoundedPrim Char
+zEncode =
+  condB unencodedChar (liftFixedToBounded E.char7) $
+  condB (== '&') (fixed2 ('z','a')) $
+  condB (== '|') (fixed2 ('z','b')) $
+  condB (== '^') (fixed2 ('z','c')) $
+  condB (== '$') (fixed2 ('z','d')) $
+  condB (== '=') (fixed2 ('z','e')) $
+  condB (== '>') (fixed2 ('z','g')) $
+  condB (== '#') (fixed2 ('z','h')) $
+  condB (== '.') (fixed2 ('z','i')) $
+  condB (== '<') (fixed2 ('z','l')) $
+  condB (== '-') (fixed2 ('z','m')) $
+  condB (== '!') (fixed2 ('z','n')) $
+  condB (== '+') (fixed2 ('z','p')) $
+  condB (== '\'') (fixed2 ('z','q')) $
+  condB (== '\\') (fixed2 ('z','r')) $
+  condB (== '/') (fixed2 ('z','s')) $
+  condB (== 't') (fixed2 ('z','t')) $
+  condB (== '_') (fixed2 ('z','u')) $
+  condB (== '%') (fixed2 ('z','v')) $
+  condB (== 'z') (fixed2 ('z','z')) $
+  condB (== '(') (fixed2 ('Z','L')) $
+  condB (== ')') (fixed2 ('Z','R')) $
+  condB (== '[') (fixed2 ('Z','M')) $
+  condB (== ']') (fixed2 ('Z','N')) $
+  condB (== ':') (fixed2 ('Z','C')) $
+  condB (== 'Z') (fixed2 ('Z','Z')) $
+  splitHex >$< fixedU
+  where
+  {-# INLINE fixed2 #-}
+  fixed2 x = liftFixedToBounded $ const x >$<
+             E.char7 >*< E.char7
+  {-# INLINE fixedU #-}
+  fixedU = liftFixedToBounded $
+             E.char7 >*< E.char7 >*< E.char7 >*< E.char7 >*< E.char7 >*< E.char7 >*< E.char7
+
+  splitHex c = case showHex (ord c) "" of
+    [x1] -> ('U',('0',('0',('0',('0',('0',x1))))))
+    [x1,x2] -> ('U',('0',('0',('0',('0',(x1,x2))))))
+    [x1,x2,x3] -> ('U',('0',('0',('0',(x1,(x2,x3))))))
+    [x1,x2,x3,x4] -> ('U',('0',('0',(x1,(x2,(x3,x4))))))
+    [x1,x2,x3,x4,x5] -> ('U',('0',(x1,(x2,(x3,(x4,x5))))))
+    [x1,x2,x3,x4,x5,x6] -> ('U',(x1,(x2,(x3,(x4,(x5,x6))))))
+    
+
+unencodedChar :: Char -> Bool   -- True for chars that don't need encoding
+unencodedChar 'Z' = False
+unencodedChar 'z' = False
+unencodedChar c   =  c >= 'a' && c <= 'z'
+                  || c >= 'A' && c <= 'Z'
+                  || c >= '0' && c <= '9'
+
 
 -- INVARIANT: All strings *must* be built from here
 -- textSymbol :: T.Text -> Symbol
@@ -365,7 +435,7 @@ stripPrefix p x = symbol <$> T.stripPrefix (symbolText p) (symbolText x)
 ---------------------------------------------------------------------
 
 vv                  :: Maybe Integer -> Symbol
-vv (Just i)         = symbol $ symbolSafeText vvName `T.snoc` symSepName `mappend` T.pack (show i) --  S (vvName ++ [symSepName] ++ show i)
+vv (Just i)         = symbol $ symbolRaw vvName `T.snoc` symSepName `mappend` T.pack (show i) --  S (vvName ++ [symSepName] ++ show i)
 vv Nothing          = vvName
 
 isNontrivialVV      :: Symbol -> Bool

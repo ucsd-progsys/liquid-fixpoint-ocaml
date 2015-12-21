@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts     #-}
 {-# LANGUAGE FlexibleInstances    #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE OverloadedStrings    #-}
@@ -13,8 +14,10 @@ module Language.Fixpoint.Smt.Serialize where
 import           Language.Fixpoint.Types
 import           Language.Fixpoint.Smt.Types
 import qualified Language.Fixpoint.Smt.Theories as Thy
+import qualified Data.List                      as L
 import qualified Data.Text                      as T
 import           Data.Text.Format               hiding (format)
+import qualified Data.Text.Lazy.Builder   as LT
 import           Data.Maybe (fromMaybe)
 {-
     (* (L t1 t2 t3) is now encoded as
@@ -52,10 +55,10 @@ instance SMTLIB2 Sort where
 instance SMTLIB2 Symbol where
   smt2 s
     | Just t <- Thy.smt2Symbol s = t
-  smt2 s                         = symbolSafeText  s
+  smt2 s                         = LT.fromText $ symbolSafeText  s
 
 instance SMTLIB2 (Symbol, Sort) where
-  smt2 (sym, t) = format "({} {})"  (smt2 sym, smt2 t)
+  smt2 (sym, t) = build "({} {})"  (smt2 sym, smt2 t)
 
 -- FIXME: this is probably too slow.
 -- RJ: Yes it is!
@@ -72,8 +75,8 @@ instance SMTLIB2 SymConst where
   smt2 = smt2 . symbol
 
 instance SMTLIB2 Constant where
-  smt2 (I n)   = format "{}" (Only n)
-  smt2 (R d)   = format "{}" (Only d)
+  smt2 (I n)   = build "{}" (Only n)
+  smt2 (R d)   = build "{}" (Only d)
 
 instance SMTLIB2 LocSymbol where
   smt2 = smt2 . val
@@ -100,32 +103,31 @@ instance SMTLIB2 Expr where
   smt2 (EVar x)         = smt2 x
 --   smt2 (ELit x _)       = smt2 x
   smt2 (EApp f es)      = smt2App f es
-  smt2 (ENeg e)         = format "(- {})"         (Only $ smt2 e)
-  smt2 (EBin o e1 e2)   = format "({} {} {})"     (smt2 o, smt2 e1, smt2 e2)
-  smt2 (EIte e1 e2 e3)  = format "(ite {} {} {})" (smt2 e1, smt2 e2, smt2 e3)
+  smt2 (ENeg e)         = build "(- {})"         (Only $ smt2 e)
+  smt2 (EBin o e1 e2)   = build "({} {} {})"     (smt2 o, smt2 e1, smt2 e2)
+  smt2 (EIte e1 e2 e3)  = build "(ite {} {} {})" (smt2 e1, smt2 e2, smt2 e3)
   smt2 (ECst e _)       = smt2 e
   smt2 e                = error  $ "TODO: SMTLIB2 Expr: " ++ show e
 
-smt2App :: LocSymbol -> [Expr] -> T.Text
-
+smt2App :: LocSymbol -> [Expr] -> LT.Builder
 smt2App f es = fromMaybe (smt2App' f ds) (Thy.smt2App f ds)
   where
    ds        = smt2 <$> es
 
 smt2App' f [] = smt2 f
-smt2App' f ds = format "({} {})" (smt2 f, smt2many ds)
+smt2App' f ds = build "({} {})" (smt2 f, smt2many ds)
 
 instance SMTLIB2 Pred where
   smt2 (PTrue)          = "true"
   smt2 (PFalse)         = "false"
   smt2 (PAnd [])        = "true"
-  smt2 (PAnd ps)        = format "(and {})"    (Only $ smt2s ps)
+  smt2 (PAnd ps)        = build "(and {})"    (Only $ smt2s ps)
   smt2 (POr [])         = "false"
-  smt2 (POr ps)         = format "(or  {})"    (Only $ smt2s ps)
-  smt2 (PNot p)         = format "(not {})"    (Only $ smt2 p)
-  smt2 (PImp p q)       = format "(=> {} {})"  (smt2 p, smt2 q)
-  smt2 (PIff p q)       = format "(=  {} {})"  (smt2 p, smt2 q)
-  smt2 (PExist bs p)    = format "(exists ({}) {})"  (smt2s bs, smt2 p)
+  smt2 (POr ps)         = build "(or  {})"    (Only $ smt2s ps)
+  smt2 (PNot p)         = build "(not {})"    (Only $ smt2 p)
+  smt2 (PImp p q)       = build "(=> {} {})"  (smt2 p, smt2 q)
+  smt2 (PIff p q)       = build "(=  {} {})"  (smt2 p, smt2 q)
+  smt2 (PExist bs p)    = build "(exists ({}) {})"  (smt2s bs, smt2 p)
   smt2 (PBexp e)        = smt2 e
   smt2 (PAtom r e1 e2)  = mkRel r e1 e2
   smt2 _                = error "smtlib2 Pred"
@@ -133,25 +135,26 @@ instance SMTLIB2 Pred where
 
 mkRel Ne  e1 e2         = mkNe e1 e2
 mkRel Une e1 e2         = mkNe e1 e2
-mkRel r   e1 e2         = format "({} {} {})"      (smt2 r, smt2 e1, smt2 e2)
-mkNe  e1 e2             = format "(not (= {} {}))" (smt2 e1, smt2 e2)
+mkRel r   e1 e2         = build "({} {} {})"      (smt2 r, smt2 e1, smt2 e2)
+mkNe  e1 e2             = build "(not (= {} {}))" (smt2 e1, smt2 e2)
 
 instance SMTLIB2 Command where
-  smt2 (Declare x ts t)    = format "(declare-fun {} ({}) {})"  (smt2 x, smt2s ts, smt2 t)
-  smt2 (Define t)          = format "(declare-sort {})"         (Only $ smt2 t)
-  smt2 (Assert Nothing p)  = format "(assert {})"               (Only $ smt2 p)
-  smt2 (Assert (Just i) p) = format "(assert (! {} :named p-{}))"  (smt2 p, i)
-  smt2 (Distinct az)       = format "(assert (distinct {}))"    (Only $ smt2s az)
+  smt2 (Declare x ts t)    = build "(declare-fun {} ({}) {})"  (smt2 x, smt2s ts, smt2 t)
+  smt2 (Define t)          = build "(declare-sort {})"         (Only $ smt2 t)
+  smt2 (Assert Nothing p)  = build "(assert {})"               (Only $ smt2 p)
+  smt2 (Assert (Just i) p) = build "(assert (! {} :named p-{}))"  (smt2 p, i)
+  smt2 (Distinct az)       = build "(assert (distinct {}))"    (Only $ smt2s az)
   smt2 (Push)              = "(push 1)"
   smt2 (Pop)               = "(pop 1)"
   smt2 (CheckSat)          = "(check-sat)"
-  smt2 (GetValue xs)       = T.unwords $ ["(get-value ("] ++ fmap smt2 xs ++ ["))"]
+  smt2 (GetValue xs)       = build "(get-value ({}))" (Only $ smt2s xs)
 
-smt2s    :: SMTLIB2 a => [a] -> T.Text
+smt2s    :: SMTLIB2 a => [a] -> LT.Builder
 smt2s    = smt2many . fmap smt2
 
-smt2many :: [T.Text] -> T.Text
-smt2many = T.intercalate " "
+-- smt2many :: [T.Text] -> T.Text
+smt2many :: [LT.Builder] -> LT.Builder
+smt2many = foldr mappend "" . L.intersperse " "
 
 {-
 (declare-fun x () Int)
